@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "aiplay",
+  "version": "${version}",
+  "name": "Ollama AI Play",
+  "description": "Lässt eine lokale Ollama-KI deinen Minecraft-Charakter steuern.",
+  "authors": ["you"],
+  "contact": {},
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.example.aiplay.AiPlayMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "minecraft": "~1.20.1",
+    "java": ">=17",
+    "fabric-api": "*"
+  }
+}
