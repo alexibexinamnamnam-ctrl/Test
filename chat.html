@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Multichat</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: transparent !important;   /* durchsichtiger Hintergrund */
+    overflow: hidden;
+    font-family: "Segoe UI", Arial, sans-serif;
+  }
+  #chat {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; justify-content: flex-end;
+    padding: 8px; box-sizing: border-box;
+  }
+  .msg {
+    margin: 3px 0; font-size: 22px; line-height: 1.25; color: #fff;
+    word-wrap: break-word;
+    text-shadow: 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000;
+  }
+  .badge {
+    display: inline-block; font-size: 14px; font-weight: 700;
+    padding: 0 6px; margin-right: 6px; border-radius: 4px; vertical-align: middle;
+    text-shadow: none; color: #fff;
+  }
+  .tw { background: #9146ff; }
+  .yt { background: #ff0000; }
+  .name { font-weight: 700; margin-right: 6px; }
+</style>
+</head>
+<body>
+<div id="chat"></div>
+<script>
+const params = new URLSearchParams(location.search);
+const TWITCH = (params.get("twitch") || "").toLowerCase().replace(/^#/, "");
+const YT_KEY = params.get("ytkey") || "";
+const YT_VIDEO = params.get("ytvideo") || "";
+const MAX_MESSAGES = 30;
+const chat = document.getElementById("chat");
+
+function addMessage(platform, name, text, color) {
+  const div = document.createElement("div");
+  div.className = "msg";
+  const b = document.createElement("span");
+  b.className = "badge " + (platform === "twitch" ? "tw" : "yt");
+  b.textContent = platform === "twitch" ? "TW" : "YT";
+  const n = document.createElement("span");
+  n.className = "name";
+  n.textContent = name;
+  if (color) n.style.color = color;
+  const t = document.createElement("span");
+  t.textContent = text;           // textContent -> kein HTML aus dem Chat möglich
+  div.append(b, n, t);
+  chat.appendChild(div);
+  while (chat.children.length > MAX_MESSAGES) chat.removeChild(chat.firstChild);
+}
+
+/* ---------------- Twitch (anonym, kein Login nötig) ---------------- */
+function connectTwitch() {
+  if (!TWITCH) return;
+  const ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+  ws.onopen = () => {
+    ws.send("CAP REQ :twitch.tv/tags");
+    ws.send("PASS SCHMOOPIIE");
+    ws.send("NICK justinfan" + Math.floor(10000 + Math.random() * 80000));
+    ws.send("JOIN #" + TWITCH);
+  };
+  ws.onmessage = (ev) => {
+    for (const line of ev.data.split("\r\n")) {
+      if (!line) continue;
+      if (line.startsWith("PING")) { ws.send("PONG :tmi.twitch.tv"); continue; }
+      const m = line.match(/^(?:@(\S+) )?:([^!]+)![^ ]+ PRIVMSG #\S+ :(.*)$/);
+      if (!m) continue;
+      const tags = {};
+      (m[1] || "").split(";").forEach(kv => { const [k, v] = kv.split("="); tags[k] = v; });
+      addMessage("twitch", tags["display-name"] || m[2], m[3], tags["color"] || "");
+    }
+  };
+  ws.onclose = () => setTimeout(connectTwitch, 5000);
+  ws.onerror = () => ws.close();
+}
+
+/* ---------------- YouTube (Data API v3, braucht API-Key + Video-ID) ---------------- */
+async function connectYouTube() {
+  if (!YT_KEY || !YT_VIDEO) return;
+  const seen = new Set();
+  let chatId = null, pageToken = "";
+  while (true) {
+    try {
+      if (!chatId) {
+        const r = await fetch("https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id="
+          + encodeURIComponent(YT_VIDEO) + "&key=" + encodeURIComponent(YT_KEY));
+        const j = await r.json();
+        chatId = j.items && j.items[0] && j.items[0].liveStreamingDetails &&
+                 j.items[0].liveStreamingDetails.activeLiveChatId;
+        if (!chatId) { await new Promise(res => setTimeout(res, 15000)); continue; } // Stream läuft noch nicht
+      }
+      let url = "https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId="
+        + encodeURIComponent(chatId) + "&part=snippet,authorDetails&key=" + encodeURIComponent(YT_KEY);
+      if (pageToken) url += "&pageToken=" + encodeURIComponent(pageToken);
+      const r = await fetch(url);
+      const j = await r.json();
+      if (j.error) { chatId = null; pageToken = ""; await new Promise(res => setTimeout(res, 20000)); continue; }
+      pageToken = j.nextPageToken || "";
+      for (const it of (j.items || [])) {
+        if (seen.has(it.id)) continue;
+        seen.add(it.id);
+        if (it.snippet && it.snippet.displayMessage)
+          addMessage("youtube", it.authorDetails.displayName, it.snippet.displayMessage, "");
+      }
+      await new Promise(res => setTimeout(res, Math.max(j.pollingIntervalMillis || 6000, 5000)));
+    } catch (e) {
+      await new Promise(res => setTimeout(res, 10000));
+    }
+  }
+}
+
+connectTwitch();
+connectYouTube();
+</script>
+</body>
+</html>
